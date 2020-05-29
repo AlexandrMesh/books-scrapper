@@ -1,0 +1,16 @@
+{
+  "name": "books-scrapper",
+  "version": "0.0.1",
+  "private": false,
+  "engines": {
+    "node": ">=8",
+    "npm": ">=3"
+  },
+  "dependencies": {
+    "axios": "^0.19.2",
+    "cheerio": "^1.0.0-rc.3",
+    "fs": "0.0.1-security",
+    "mongodb": "^3.5.7",
+    "path": "^0.12.7"
+  }
+}
