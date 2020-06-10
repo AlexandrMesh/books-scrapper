@@ -10,9 +10,8 @@
     "axios": "^0.19.2",
     "cheerio": "^1.0.0-rc.3",
     "fs": "0.0.1-security",
-    "mongodb": "^3.5.7",
+    "mongoose": "^5.9.18",
     "path": "^0.12.7",
-    "save": "^2.4.0",
     "shortid": "^2.2.15"
   }
 }
