@@ -3,19 +3,43 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 const shortid = require('shortid');
-const MongoClient = require('mongodb').MongoClient;
+const mongoose = require('mongoose');
+
+const Schema = mongoose.Schema;
+
+const bookSchema = new Schema({
+  title: String,
+  categoryId: Number,
+  coverPath: String,
+  authorsList: [String],
+  annotation: String,
+  isbn: String,
+  pages: String,
+  publisher: String,
+  year: Number,
+  votesCount: Number,
+  rating: Number
+});
+
+const Book = mongoose.model('Book', bookSchema);
+
+// TODO: 
+// 1. package scripts with parameters
+// 2. build for prod and dev
 
 const mongoDbUrl = 'mongodb://localhost:27017';
 const dbName = 'bookstracker';
 const collectionName = 'books';
 
 const baseUrl = "https://www.labirint.ru";
-const categoryUrl = `${baseUrl}/genres/2304/?page=4`;
-const category = 1;
+const categoryId = 1;
+let currentCategoryPage = 5;
+let lastCategoryPage = 7;
+const initialCategoryUrl = `${baseUrl}/genres/2304/?page=${currentCategoryPage}`;
 
-const limitImagesInFolder = 3;
-const rootImagesFolderName = 'images';
-let imagesFolderName = `${rootImagesFolderName}/${shortid.generate()}`;
+const limitImagesInFolder = 10; //by default = 500
+const imagesFolderNamePrefix = 'images';
+let imagesFolderName = `${shortid.generate()}`;
 
 const imageType = {
   'image/gif': 'gif',
@@ -29,7 +53,23 @@ const getImageType = headers => {
 
 const getNumbersFromString = string => string.match(/\d+/g).map(Number);
 
-const startScrapping = async (db, client) => {
+const startScrapping = () => {
+  moveToCategoryPage(initialCategoryUrl);
+}
+
+const setCategoryPage = () => {
+  currentCategoryPage = currentCategoryPage + 1;
+  if (currentCategoryPage > lastCategoryPage) {
+    console.log(currentCategoryPage, 'page NO');
+    mongoose.connection.close();
+    return true;
+  } else {
+    console.log(currentCategoryPage, 'page YES');
+    moveToCategoryPage(`${baseUrl}/genres/2304/?page=${currentCategoryPage}`);
+  }
+}
+
+const moveToCategoryPage = categoryUrl => {
   axios(categoryUrl)
     .then(async response => {
       try {
@@ -39,22 +79,32 @@ const startScrapping = async (db, client) => {
 
         const books = bookItems.map(async (index, element) => {
           if (index < 10) {
-            const href = $(element).find('.product-cover .cover').attr('href') || $(element).find('.b-product-block-link').attr('href');
-            const detailUrl = `${baseUrl}${href}`;
-            const bookTitle = $(element).find('.product-cover .product-title-link .product-title').text();
-            console.log(index);
-            const bookInfo = await setBookInfo(detailUrl, bookTitle);
-            await insertDocument(db, bookInfo);
+            try {
+              const href = $(element).find('.product-cover .cover').attr('href') || $(element).find('.b-product-block-link').attr('href');
+              const detailUrl = `${baseUrl}${href}`;
+              const bookTitle = $(element).find('.product-cover .product-title-link .product-title').text();
+              const bookInfo = await setBookInfo(detailUrl, bookTitle);
+              const book = new Book(bookInfo);
+              await Book.find({ title: bookTitle }, async (error, doc) => {
+                if (!doc.length) {
+                  await book.save();
+                }
+              })
+            } catch (error) {
+              console.log(error);
+            }
           }
         }).get();
 
-        Promise.all(books).then(() => client.close());
+        Promise.all(books).then(() => {
+          setCategoryPage();
+        });
       } catch (error) {
         console.log(error);
       }
     })
     .catch(error => console.log(error));
-}
+};
 
 const setBookInfo = (detailUrl, bookTitle) => {
   return new Promise(resolve => {
@@ -79,7 +129,7 @@ const setBookInfo = (detailUrl, bookTitle) => {
         downloadImage(imageSrc).then(data => {
           const bookInfo = {
             title: bookTitle,
-            category,
+            categoryId,
             coverPath: data,
             authorsList,
             annotation: fullAnnotation || annotation,
@@ -107,7 +157,7 @@ const downloadImage = async imageSrc => {
       responseType: 'stream'
     })
 
-    const coversFolder = path.resolve(__dirname, imagesFolderName);
+    const coversFolder = path.resolve(__dirname, `${imagesFolderNamePrefix}/${imagesFolderName}`);
 
     if (!fs.existsSync(coversFolder)){
       fs.mkdirSync(coversFolder);
@@ -115,12 +165,12 @@ const downloadImage = async imageSrc => {
 
     fs.readdir(coversFolder, (error, files) => {
       if (files.length + 1 === limitImagesInFolder) {
-        imagesFolderName = `${rootImagesFolderName}/${shortid.generate()}`;
+        imagesFolderName = `${shortid.generate()}`;
       }
     });
 
     const imageTitle = `${shortid.generate()}.${getImageType(response.headers)}`;
-    const _path = path.resolve(__dirname, imagesFolderName, imageTitle)
+    const _path = path.resolve(__dirname, `${imagesFolderNamePrefix}/${imagesFolderName}`, imageTitle)
     const writer = fs.createWriteStream(_path)
 
     response.data.pipe(writer)
@@ -135,28 +185,12 @@ const downloadImage = async imageSrc => {
 }
 
 const connectMongoDb = () => {
-  // Create a new MongoClient
-  const client = new MongoClient(mongoDbUrl, { useUnifiedTopology: true });
-
-  // Use connect method to connect to the Server
-  client.connect((err) => {
-    console.log("Connected successfully to server");
-
-    const db = client.db(dbName);
-
-    startScrapping(db, client);
-
-  });
-}
-
-const insertDocument = (db, query) => {
-  // Get the documents collection
-  const collection = db.collection(collectionName);
-  // Insert some documents
-  return new Promise(resolve => {
-    collection.insertOne(query, (err, result) => {
-      resolve(true);
-    });
+  mongoose.connect(`${mongoDbUrl}/${dbName}`, {useNewUrlParser: true, useUnifiedTopology: true});
+  var db = mongoose.connection;
+  db.on('error', console.error.bind(console, 'connection error:'));
+  db.on('connected', async () => {
+    console.log('Connected to mongoDb');
+    startScrapping();
   });
 }
 
