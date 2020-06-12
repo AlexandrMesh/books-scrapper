@@ -26,6 +26,8 @@ const Book = mongoose.model('Book', bookSchema);
 // TODO: 
 // 1. package scripts with parameters
 // 2. build for prod and dev
+// 3. reconnect if error happens
+// 4. refactoring
 
 const mongoDbUrl = 'mongodb://localhost:27017';
 const dbName = 'bookstracker';
@@ -35,9 +37,11 @@ const baseUrl = "https://www.labirint.ru";
 const categoryId = 1;
 let currentCategoryPage = 5;
 let lastCategoryPage = 7;
-const initialCategoryUrl = `${baseUrl}/genres/2304/?page=${currentCategoryPage}`;
+const genreId = 2304;
+let initialCategoryUrl = `${baseUrl}/genres/${genreId}`;
+let fullCategoryUrl;
 
-const limitImagesInFolder = 10; //by default = 500
+const limitImagesInFolder = 500; //by default = 500
 const imagesFolderNamePrefix = 'images';
 let imagesFolderName = `${shortid.generate()}`;
 
@@ -45,6 +49,36 @@ const imageType = {
   'image/gif': 'gif',
   'image/jpeg': 'jpg',
   'image/png': 'png'
+}
+
+const delay = timeout => {
+  return new Promise(resolve => {
+    const wait = setTimeout(() => {
+      clearTimeout(wait);
+      resolve(true);
+    }, timeout)
+  });
+}
+
+const detailUrls = [];
+let currentDetailUrlIndex = 0;
+
+const limitBooksOnPage = (isActive = false, index, countBooksOnPage = 1000) => {
+  if (!isActive) {
+    return true;
+  } else if (index < countBooksOnPage) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+const getCategoryUrl = () => {
+  return fullCategoryUrl;
+}
+
+const setCategoryUrl = page => {
+  fullCategoryUrl = `${initialCategoryUrl}/?page=${page}`
 }
 
 const getImageType = headers => {
@@ -57,15 +91,38 @@ const startScrapping = () => {
   moveToCategoryPage(initialCategoryUrl);
 }
 
+const saveBooks = async () => {
+  try {
+    if (currentDetailUrlIndex === detailUrls.length) {
+      mongoose.connection.close();
+      console.log(new Date(), 'end');
+      return true;
+    }
+    await delay(2000);
+    const detailUrl = detailUrls[currentDetailUrlIndex].detailUrl;
+    const bookTitle = detailUrls[currentDetailUrlIndex].bookTitle;
+    const bookInfo = await setBookInfo(detailUrl, bookTitle);
+    const book = new Book(bookInfo);
+    console.log(currentDetailUrlIndex, 'PROCESS');
+    console.log(detailUrls.length, 'PROCESS');
+    await book.save();
+    currentDetailUrlIndex = currentDetailUrlIndex + 1;
+    saveBooks();
+  } catch (error) {
+    console.log(error);
+  }
+}
+
 const setCategoryPage = () => {
   currentCategoryPage = currentCategoryPage + 1;
   if (currentCategoryPage > lastCategoryPage) {
     console.log(currentCategoryPage, 'page NO');
-    mongoose.connection.close();
+    saveBooks()
     return true;
   } else {
+    setCategoryUrl(currentCategoryPage);
     console.log(currentCategoryPage, 'page YES');
-    moveToCategoryPage(`${baseUrl}/genres/2304/?page=${currentCategoryPage}`);
+    moveToCategoryPage(getCategoryUrl());
   }
 }
 
@@ -78,18 +135,12 @@ const moveToCategoryPage = categoryUrl => {
         const bookItems = $('.catalog-responsive .products-row > .card-column:not(.responsive-promoblock)');
 
         const books = bookItems.map(async (index, element) => {
-          if (index < 10) {
+          if (limitBooksOnPage(true, index)) {
             try {
               const href = $(element).find('.product-cover .cover').attr('href') || $(element).find('.b-product-block-link').attr('href');
               const detailUrl = `${baseUrl}${href}`;
               const bookTitle = $(element).find('.product-cover .product-title-link .product-title').text();
-              const bookInfo = await setBookInfo(detailUrl, bookTitle);
-              const book = new Book(bookInfo);
-              await Book.find({ title: bookTitle }, async (error, doc) => {
-                if (!doc.length) {
-                  await book.save();
-                }
-              })
+              detailUrls.push({ bookTitle, detailUrl });
             } catch (error) {
               console.log(error);
             }
@@ -108,7 +159,7 @@ const moveToCategoryPage = categoryUrl => {
 
 const setBookInfo = (detailUrl, bookTitle) => {
   return new Promise(resolve => {
-    axios(detailUrl)
+      axios(detailUrl)
       .then(response => {
         const html = response.data;
         const $ = cheerio.load(html);
@@ -140,13 +191,13 @@ const setBookInfo = (detailUrl, bookTitle) => {
             votesCount: getNumbersFromString(votesCount)[0],
             rating: parseFloat(rating)
           }
+          console.log('book');
           resolve(bookInfo);
         })
         .catch(error => console.log(error));
       })
       .catch(error => console.log(error));
   });
-
 }
 
 const downloadImage = async imageSrc => {
@@ -185,6 +236,7 @@ const downloadImage = async imageSrc => {
 }
 
 const connectMongoDb = () => {
+  console.log(new Date(), 'start');
   mongoose.connect(`${mongoDbUrl}/${dbName}`, {useNewUrlParser: true, useUnifiedTopology: true});
   var db = mongoose.connection;
   db.on('error', console.error.bind(console, 'connection error:'));
