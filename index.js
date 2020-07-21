@@ -29,8 +29,8 @@ const Book = mongoose.model('Book', bookSchema);
 // 3. reconnect if error happens
 // 4. refactoring
 
-const mongoDbUrl = 'mongodb://localhost:27017';
 const dbName = 'bookstracker';
+const mongoDbUrl = `mongodb://admin:JDASD&#ASDgsdds@185.12.94.36:27017/${dbName}?authSource=admin&readPreference=primary&appname=MongoDB%20Compass&ssl=false`;
 const collectionName = 'books';
 
 const baseUrl = "https://www.labirint.ru";
@@ -98,7 +98,7 @@ const saveBooks = async () => {
       console.log(new Date(), 'end');
       return true;
     }
-    await delay(2000);
+    await delay(1000);
     const detailUrl = detailUrls[currentDetailUrlIndex].detailUrl;
     const bookTitle = detailUrls[currentDetailUrlIndex].bookTitle;
     const bookInfo = await setBookInfo(detailUrl, bookTitle);
@@ -237,7 +237,7 @@ const downloadImage = async imageSrc => {
 
 const connectMongoDb = () => {
   console.log(new Date(), 'start');
-  mongoose.connect(`${mongoDbUrl}/${dbName}`, {useNewUrlParser: true, useUnifiedTopology: true});
+  mongoose.connect(mongoDbUrl, {useNewUrlParser: true, useUnifiedTopology: true, serverSelectionTimeoutMS: 5000});
   var db = mongoose.connection;
   db.on('error', console.error.bind(console, 'connection error:'));
   db.on('connected', async () => {
