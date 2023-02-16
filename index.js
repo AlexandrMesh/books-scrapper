@@ -10,15 +10,12 @@ const Schema = mongoose.Schema;
 const bookSchema = new Schema({
   title: String,
   categoryId: Number,
+  subCategoryId: Number,
   coverPath: String,
   authorsList: [String],
   annotation: String,
-  isbn: String,
   pages: String,
-  publisher: String,
-  year: Number,
   votesCount: Number,
-  rating: Number
 });
 
 const Book = mongoose.model('Book', bookSchema);
@@ -29,12 +26,13 @@ const Book = mongoose.model('Book', bookSchema);
 // 3. reconnect if error happens
 // 4. refactoring
 
-const dbName = 'bookstracker';
+const dbName = 'bookboard';
 const mongoDbUrl = `mongodb://admin:JDASD&#ASDgsdds@185.12.94.36:27017/${dbName}?authSource=admin&readPreference=primary&appname=MongoDB%20Compass&ssl=false`;
 const collectionName = 'books';
 
 const baseUrl = "https://www.labirint.ru";
 const categoryId = 1;
+const subCategoryId = 2;
 let currentCategoryPage = 5;
 let lastCategoryPage = 7;
 const genreId = 2304;
@@ -165,12 +163,8 @@ const setBookInfo = (detailUrl, bookTitle) => {
         const $ = cheerio.load(html);
         const imageSrc = $('#product-image > .book-img-cover').attr('data-src');
         const authors = $('#product-specs > .product-description > .authors > a[data-event-label="author"]');
-        const isbn = $('#product-specs > .product-description > .isbn').text();
-        const pages = $('#product-specs > .product-description > .pages2').text();
-        const publisher = $('#product-specs > .product-description > .publisher > a[data-event-label="publisher"]').text();
-        const year = $('#product-specs > .product-description > .publisher').text();
+        const pages = $('#product-specs > .product-description > .pages2 > span.js-open-block-page_count').attr('data-pages');
         const votesCount = $('#product-voting #product-rating-marks-label').text();
-        const rating = $('#product-voting #rate').text();
         const authorsList = [];
         authors.map((index, element) => {
           authorsList.push($(element).text());
@@ -181,15 +175,12 @@ const setBookInfo = (detailUrl, bookTitle) => {
           const bookInfo = {
             title: bookTitle,
             categoryId,
+            subCategoryId,
             coverPath: data,
             authorsList,
             annotation: fullAnnotation || annotation,
-            isbn,
             pages,
-            publisher,
-            year: getNumbersFromString(year)[0],
-            votesCount: getNumbersFromString(votesCount)[0],
-            rating: parseFloat(rating)
+            votesCount: getNumbersFromString(votesCount)[0]
           }
           console.log('book');
           resolve(bookInfo);
