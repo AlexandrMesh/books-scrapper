@@ -9,16 +9,16 @@ const Schema = mongoose.Schema;
 
 const bookSchema = new Schema({
   title: String,
-  categoryId: Number,
-  subCategoryId: Number,
+  categoryPath: String,
   coverPath: String,
   authorsList: [String],
   annotation: String,
-  pages: String,
+  pages: Number,
   votesCount: Number,
 });
 
 const Book = mongoose.model('Book', bookSchema);
+const V2_book = mongoose.model('V2_book', bookSchema);
 
 // TODO: 
 // 1. package scripts with parameters
@@ -26,22 +26,26 @@ const Book = mongoose.model('Book', bookSchema);
 // 3. reconnect if error happens
 // 4. refactoring
 
-const dbName = 'bookboard';
+const dbName = 'bookstracker';
 const mongoDbUrl = `mongodb://admin:JDASD&#ASDgsdds@185.12.94.36:27017/${dbName}?authSource=admin&readPreference=primary&appname=MongoDB%20Compass&ssl=false`;
 const collectionName = 'books';
 
-const baseUrl = "https://www.labirint.ru";
-const categoryId = 1;
-const subCategoryId = 2;
-let currentCategoryPage = 5;
-let lastCategoryPage = 7;
-const genreId = 2304;
-let initialCategoryUrl = `${baseUrl}/genres/${genreId}`;
+const baseUrl = "https://www.chitai-gorod.ru";
+// ID категории
+const categoryPath = '0.0.0'
+// страница с которой начинать (по умолчанию 1)
+let currentCategoryPage = 1;
+// страница на которой заканчивать
+let lastCategoryPage = 2;
+
+//взять из урла на labirint.ru
+const genreId = 'catalog/books/psihologiya-biznesa-psihologiya-uspekha-karera-biznes-ehtiket-110363';
+let initialCategoryUrl = `${baseUrl}/${genreId}`;
 let fullCategoryUrl;
 
 const limitImagesInFolder = 500; //by default = 500
 const imagesFolderNamePrefix = 'images';
-let imagesFolderName = `${shortid.generate()}`;
+let imagesFolderName = `${categoryPath}_${shortid.generate()}`;
 
 const imageType = {
   'image/gif': 'gif',
@@ -130,15 +134,19 @@ const moveToCategoryPage = categoryUrl => {
       try {
         const html = response.data;
         const $ = cheerio.load(html);
-        const bookItems = $('.catalog-responsive .products-row > .card-column:not(.responsive-promoblock)');
-
+        const bookItems = $('.catalog-list .products-list article.product-card');
         const books = bookItems.map(async (index, element) => {
           if (limitBooksOnPage(true, index)) {
             try {
-              const href = $(element).find('.product-cover .cover').attr('href') || $(element).find('.b-product-block-link').attr('href');
+              const href = $(element).find('a.product-card__picture').attr('href');
               const detailUrl = `${baseUrl}${href}`;
-              const bookTitle = $(element).find('.product-cover .product-title-link .product-title').text();
-              detailUrls.push({ bookTitle, detailUrl });
+              const bookTitle = $(element).find('.product-title__head').text().trim();
+
+              const bookExists = await Book.findOne({ title: bookTitle }).collation( { locale: 'ru', strength: 2 } );
+              console.log(bookExists, 'bookExists');
+              if (!bookExists) {
+                detailUrls.push({ bookTitle, detailUrl });
+              }
             } catch (error) {
               console.log(error);
             }
@@ -157,37 +165,46 @@ const moveToCategoryPage = categoryUrl => {
 
 const setBookInfo = (detailUrl, bookTitle) => {
   return new Promise(resolve => {
-      axios(detailUrl)
+    axios(detailUrl)
       .then(response => {
         const html = response.data;
         const $ = cheerio.load(html);
-        const imageSrc = $('#product-image > .book-img-cover').attr('data-src');
-        const authors = $('#product-specs > .product-description > .authors > a[data-event-label="author"]');
-        const pages = $('#product-specs > .product-description > .pages2 > span.js-open-block-page_count').attr('data-pages');
-        const votesCount = $('#product-voting #product-rating-marks-label').text();
+        const imageSrc = $('img.product-gallery__image').attr('src');
+        const authors = $('a[itemprop="author"]');
+        const pages = $('span[itemprop="numberOfPages"]').text();
+        const votesCount = $('.product-detail-rating span[itemprop="reviewCount"]').text();
         const authorsList = [];
         authors.map((index, element) => {
-          authorsList.push($(element).text());
+          const author = $(element).text().trim();
+          if (author) {
+            authorsList.push(author);
+          }
         })
-        const fullAnnotation = $('#product-about #fullannotation p').text();
-        const annotation = $('#product-about > p').text();
+        const fullAnnotation = $('div[itemprop="description"]').text().trim();
+        // const annotation = $('#product-about > p').text();
         downloadImage(imageSrc).then(data => {
           const bookInfo = {
-            title: bookTitle,
-            categoryId,
-            subCategoryId,
+            title: bookTitle.trim(),
+            categoryPath,
             coverPath: data,
             authorsList,
-            annotation: fullAnnotation || annotation,
-            pages,
-            votesCount: getNumbersFromString(votesCount)[0]
+            annotation: fullAnnotation,
+            pages: Number(pages),
+            votesCount
           }
           console.log('book');
           resolve(bookInfo);
         })
-        .catch(error => console.log(error));
+          .catch(error => console.log(error));
       })
-      .catch(error => console.log(error));
+      .catch(error => {
+        // if error to go next
+        if (currentDetailUrlIndex < detailUrls.length) {
+          currentDetailUrlIndex = currentDetailUrlIndex + 1;
+          saveBooks();
+        }
+        console.log(error);
+      });
   });
 }
 
@@ -201,13 +218,13 @@ const downloadImage = async imageSrc => {
 
     const coversFolder = path.resolve(__dirname, `${imagesFolderNamePrefix}/${imagesFolderName}`);
 
-    if (!fs.existsSync(coversFolder)){
+    if (!fs.existsSync(coversFolder)) {
       fs.mkdirSync(coversFolder);
     }
 
     fs.readdir(coversFolder, (error, files) => {
       if (files.length + 1 === limitImagesInFolder) {
-        imagesFolderName = `${shortid.generate()}`;
+        imagesFolderName = `${categoryPath}_${shortid.generate()}`;
       }
     });
 
@@ -226,14 +243,73 @@ const downloadImage = async imageSrc => {
   }
 }
 
+const updateBooks = async () => {
+  const res = await Book.updateMany({}, [
+    { $set: { categoryPath: { $concat: ['$categoryId', '.', '$categoryLevel1Id', '.', '$categoryLevel2Id'] } } },
+    { $unset: ['categoryId', 'categoryLevel1Id', 'categoryLevel2Id'] }
+  ]);
+  console.log(res, 'res');
+}
+
+// const updateCoverPath = async () => {
+//   const res = await Book.updateMany({}, [
+//     {$set: { coverPathWebp: { $substr: [ "$coverPathWebp", 0, { $add: [ { $strLenCP: "$coverPathWebp" }, -4 ] } ]}} }
+//   ]);
+//   console.log(res, 'res');
+// }
+
+// const updateCoverPath = async () => {
+//   const res = await Book.updateMany({}, [
+//     {$set: { coverPath: {$arrayElemAt:[{$split:["$coverPath", "."]}, 0]}} }
+//   ]);
+//   console.log(res, 'res');
+// }
+
+// const updateCoverPath = async () => {
+//   const res = await Book.updateMany({}, [
+//     {$set: { coverPathWebp: '213123140asdjasd.jpg'} }
+//   ]);
+//   console.log(res, 'res');
+// }
+
+const removeDuplicates = async () => {
+  const duplicates = [];
+  // const res = await Book.aggregate([
+  //   {"$match": {"title" :{ "$ne" : null } } },
+  //   {"$group" : {"_id": "$title", dups: { "$addToSet": "$_id" }, "count": { "$sum": 1 } } },
+  //   {"$match": {"count" : {"$gt": 1} } },
+  //   {"$project": {"title" : "$_id", "_id" : 0} }
+  // ],
+  // {allowDiskUse: true}       // For faster processing if set is larger
+  // )               // You can display result until this and check duplicates 
+  // .forEach(function(doc) {
+  //     doc.dups.shift();      // First element skipped for deleting
+  //     doc.dups.forEach( function(dupId){ 
+  //         duplicates.push(dupId);   // Getting all duplicate ids
+  //         }
+  //     )
+  // });
+  const res = await Book.aggregate([
+    { $group: { _id: "$title", dups: { $push: "$_id" }, count: { $sum: 1 } } },
+    { $match: { count: { $gt: 1 } } }
+  ]);
+  res.forEach(async function(doc){
+    doc.dups.shift();
+    await Book.deleteMany({_id : {$in: doc.dups}});
+  });
+  console.log(res, 'res');
+}
+
 const connectMongoDb = () => {
   console.log(new Date(), 'start');
-  mongoose.connect(mongoDbUrl, {useNewUrlParser: true, useUnifiedTopology: true, serverSelectionTimeoutMS: 5000});
+  mongoose.connect(mongoDbUrl, { useNewUrlParser: true, useUnifiedTopology: true, serverSelectionTimeoutMS: 5000 });
   var db = mongoose.connection;
   db.on('error', console.error.bind(console, 'connection error:'));
   db.on('connected', async () => {
     console.log('Connected to mongoDb');
+    // updateCoverPath();
     startScrapping();
+    // removeDuplicates();
   });
 }
 
